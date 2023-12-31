@@ -4,6 +4,7 @@ mod tests;
 mod bytecode;
 mod lex;
 mod parse;
+mod str;
 mod value;
 mod vm;
 

@@ -1,13 +1,14 @@
-use crate::{ByteCode, ByteCodeStack, Lexer, Token, Value};
+use smol_str::SmolStr;
 
 use self::error::{bail, expect_next};
+use crate::{ByteCode, ByteCodeStack, Lexer, Token, Value};
 
 #[derive(Debug)]
 pub struct ParseProto<'a> {
     pub constants: Vec<Value>,
     pub bytecodes: Vec<ByteCode>,
     pub lexer: Lexer<'a>,
-    pub locals: Vec<String>,
+    pub locals: Vec<SmolStr>,
 }
 
 impl<'a> ParseProto<'a> {
@@ -35,6 +36,7 @@ impl<'a> ParseProto<'a> {
                     t => self.call_function(t, name),
                 }?,
                 Token::Eof => break,
+                Token::Comment => continue,
                 t => bail!(t),
             };
             self.bytecodes.push(code);
@@ -73,7 +75,7 @@ impl<'a> ParseProto<'a> {
                 }
             }
             Token::Float(f) => self.load_const(dst, Value::Float(f)),
-            Token::String(s) => self.load_const(dst, Value::String(s)),
+            Token::String(s) => self.load_const(dst, Value::String(s.into())),
             Token::Name(name) => self.load_var(dst, name),
             t => bail!(t, "<expression>"),
         };
@@ -81,12 +83,12 @@ impl<'a> ParseProto<'a> {
         Ok(code)
     }
 
-    fn load_var(&mut self, dst: u8, name: String) -> ByteCode {
+    fn load_var(&mut self, dst: u8, name: SmolStr) -> ByteCode {
         // 优先查找后定义的变量，即作用域遮蔽
         if let Some(src) = self.local_var(&name) {
             ByteCode::Move(dst, src as u8)
         } else {
-            ByteCode::GetGlobal(dst, self.add_const(Value::String(name)) as u8)
+            ByteCode::GetGlobal(dst, self.add_const(Value::Identifier(name)) as u8)
         }
     }
 
@@ -96,13 +98,13 @@ impl<'a> ParseProto<'a> {
     // <global> = <const>   把常量赋值给全局变量，需要首先把常量加到常量表中，然后通过字节码 SetGlobalConst 完成赋值
     // <global> = <local>   把局部变量赋值给全局变量，对应字节码 SetGlobal
     // <global> = <global>  把全局变量赋值给全局变量，对应字节码 SetGlobalGlobal
-    fn assign(&mut self, var: String) -> Result<ByteCode, ParseError> {
+    fn assign(&mut self, var: SmolStr) -> Result<ByteCode, ParseError> {
         if let Some(src) = self.local_var(&var) {
             // 正在赋值给局部变量
             self.load_exp(src as u8)
         } else {
             // 正在赋值给全局变量
-            let gi = self.add_const(Value::String(var)) as u8;
+            let gi = self.add_const(Value::Identifier(var)) as u8;
 
             let code = match self.lexer.next()? {
                 Token::Nil => ByteCode::SetGlobalConst(gi, self.add_const(Value::Nil) as u8),
@@ -119,13 +121,13 @@ impl<'a> ParseProto<'a> {
                     ByteCode::SetGlobalConst(gi, self.add_const(Value::Float(f)) as u8)
                 }
                 Token::String(s) => {
-                    ByteCode::SetGlobalConst(gi, self.add_const(Value::String(s)) as u8)
+                    ByteCode::SetGlobalConst(gi, self.add_const(Value::String(s.into())) as u8)
                 }
                 Token::Name(var) => {
                     if let Some(src) = self.local_var(&var) {
                         ByteCode::SetGlobalLocal(gi, src as u8)
                     } else {
-                        ByteCode::SetGlobalGlobal(gi, self.add_const(Value::String(var)) as u8)
+                        ByteCode::SetGlobalGlobal(gi, self.add_const(Value::Identifier(var)) as u8)
                     }
                 }
                 t => bail!(t, "<expression>"),
@@ -139,7 +141,7 @@ impl<'a> ParseProto<'a> {
         self.locals.iter().rposition(|var| var == name)
     }
 
-    fn call_function(&mut self, token: Token, name: String) -> Result<ByteCode, ParseError> {
+    fn call_function(&mut self, token: Token, name: SmolStr) -> Result<ByteCode, ParseError> {
         let ifunc = self.locals.len() as u8;
         let iarg = ifunc + 1;
 
@@ -153,7 +155,7 @@ impl<'a> ParseProto<'a> {
                 expect_next!(self.lexer, Token::ParR, "`)`");
             }
             Token::String(s) => {
-                let code = self.load_const(iarg, Value::String(s));
+                let code = self.load_const(iarg, Value::String(s.into()));
                 self.bytecodes.push(code);
             }
             t => bail!(t, "`(<expression>)` or string"),

@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
+use smol_str::SmolStr;
+
 use crate::{ByteCode, ParseProto, Value};
 
 #[derive(Debug)]
 pub struct ExeState {
-    globals: HashMap<String, Value>,
+    globals: HashMap<SmolStr, Value>,
     stack: Vec<Value>,
     func_index: usize,
 }
@@ -13,7 +15,7 @@ impl ExeState {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let globals =
-            HashMap::from_iter([(String::from("print"), Value::Function(Self::lib_print))]);
+            HashMap::from_iter([(SmolStr::new("print"), Value::Function(Self::lib_print))]);
         Self {
             globals,
             stack: Vec::new(),
@@ -26,7 +28,7 @@ impl ExeState {
             tracing::trace!("executing {code:?}");
             match code {
                 ByteCode::GetGlobal(dst, name) => {
-                    let key = proto.constants[name as usize].as_str().unwrap();
+                    let key = proto.constants[name as usize].as_identifier().unwrap();
                     self.set_stack(dst, self.globals.get(key).cloned().unwrap_or_default());
                 }
                 ByteCode::Move(dst, src) => {
@@ -54,24 +56,33 @@ impl ExeState {
                 }
                 ByteCode::SetGlobalConst(gi, ki) => {
                     self.globals.insert(
-                        proto.constants[gi as usize].as_str().unwrap().to_owned(),
+                        proto.constants[gi as usize]
+                            .as_identifier()
+                            .unwrap()
+                            .clone(),
                         proto.constants[ki as usize].clone(),
                     );
                 }
                 ByteCode::SetGlobalLocal(gi, src) => {
                     self.globals.insert(
-                        proto.constants[gi as usize].as_str().unwrap().to_owned(),
+                        proto.constants[gi as usize]
+                            .as_identifier()
+                            .unwrap()
+                            .to_owned(),
                         self.stack[src as usize].clone(),
                     );
                 }
                 ByteCode::SetGlobalGlobal(lhsi, rhsi) => {
                     let rhs = self
                         .globals
-                        .get(proto.constants[rhsi as usize].as_str().unwrap())
+                        .get(proto.constants[rhsi as usize].as_identifier().unwrap())
                         .cloned()
                         .unwrap_or_default();
                     self.globals.insert(
-                        proto.constants[lhsi as usize].as_str().unwrap().to_owned(),
+                        proto.constants[lhsi as usize]
+                            .as_identifier()
+                            .unwrap()
+                            .clone(),
                         rhs,
                     );
                 }

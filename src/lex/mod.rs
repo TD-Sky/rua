@@ -1,14 +1,22 @@
+mod string;
+
 use std::collections::HashMap;
 
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, take_while1},
     character::complete::{char, digit1, multispace0, one_of},
-    combinator::{eof, map, map_res, opt, recognize, value},
+    combinator::{eof, map_res, opt, recognize, value},
     sequence::{delimited, preceded, tuple},
     IResult,
 };
 use once_cell::sync::Lazy;
+use smol_str::SmolStr;
+use tinyvec::TinyVec;
+
+use crate::str::LossyStr;
+
+use self::string::lex_string;
 
 static UNIT_TOKEN: Lazy<HashMap<&'static str, Token>> = Lazy::new(|| {
     HashMap::from_iter([
@@ -98,13 +106,16 @@ pub enum Token {
     // constant values
     Integer(i64),
     Float(f64),
-    String(String),
+    String(TinyVec<[u8; LossyStr::INLINE_CAP]>),
 
     // name of variables or table keys
-    Name(String),
+    Name(SmolStr),
 
     // end
     Eof,
+
+    // comment
+    Comment
 }
 
 pub type LexError = nom::Err<nom::error::Error<String>>;
@@ -124,27 +135,28 @@ impl<'a> Lexer<'a> {
     }
 }
 
-fn lex(s: &str) -> IResult<&str, Token> {
+fn lex(input: &str) -> IResult<&str, Token> {
     preceded(
         multispace0,
         alt((
             lex_string,
+            lex_comment,
             lex_float,
             lex_integer,
             lex_word,
             lex_chars,
             value(Token::Eof, eof),
         )),
-    )(s)
+    )(input)
 }
 
-fn lex_integer(s: &str) -> IResult<&str, Token> {
+fn lex_integer(input: &str) -> IResult<&str, Token> {
     map_res(recognize(preceded(opt(char('-')), digit1)), |s: &str| {
         s.parse().map(Token::Integer)
-    })(s)
+    })(input)
 }
 
-fn lex_float(s: &str) -> IResult<&str, Token> {
+fn lex_float(input: &str) -> IResult<&str, Token> {
     map_res(
         alt((
             // Case one: .42
@@ -165,28 +177,22 @@ fn lex_float(s: &str) -> IResult<&str, Token> {
             recognize(tuple((digit1, char('.'), opt(digit1)))),
         )),
         |s: &str| s.parse().map(Token::Float),
-    )(s)
+    )(input)
 }
 
-fn lex_string(s: &str) -> IResult<&str, Token> {
-    map(delimited(char('"'), is_not("\""), char('"')), |s: &str| {
-        Token::String(s.to_owned())
-    })(s)
-}
-
-fn lex_word(s: &str) -> IResult<&str, Token> {
-    take_while1(|c: char| c.is_ascii_alphanumeric() || c == '_')(s).map(|(input, output)| {
+fn lex_word(input: &str) -> IResult<&str, Token> {
+    take_while1(|c: char| c.is_ascii_alphanumeric() || c == '_')(input).map(|(input, output)| {
         (
             input,
             UNIT_TOKEN
                 .get(output)
                 .cloned()
-                .unwrap_or_else(|| Token::Name(String::from(output))),
+                .unwrap_or_else(|| Token::Name(SmolStr::new(output))),
         )
     })
 }
 
-fn lex_chars(s: &str) -> IResult<&str, Token> {
+fn lex_chars(input: &str) -> IResult<&str, Token> {
     alt((
         tag("<<"),
         tag(">>"),
@@ -199,6 +205,13 @@ fn lex_chars(s: &str) -> IResult<&str, Token> {
         tag(".."),
         tag("..."),
         recognize(one_of("+-*/%^#&~|<>=(){}[];:,.")),
-    ))(s)
+    ))(input)
     .map(|(input, output)| (input, UNIT_TOKEN.get(output).cloned().unwrap()))
+}
+
+fn lex_comment(input: &str) -> IResult<&str, Token> {
+    value(
+        Token::Comment,
+        delimited(tag("--"), is_not("\n"), char('\n')),
+    )(input)
 }

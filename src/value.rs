@@ -1,3 +1,6 @@
+use smol_str::SmolStr;
+
+use crate::str::LossyStr;
 use crate::ExeState;
 
 pub type LuaFunc = fn(&mut ExeState) -> i32;
@@ -8,8 +11,9 @@ pub enum Value {
     Boolean(bool),
     Integer(i64),
     Float(f64),
-    String(String),
+    String(LossyStr),
     Function(LuaFunc),
+    Identifier(SmolStr),
 }
 
 impl Default for Value {
@@ -25,16 +29,17 @@ impl std::fmt::Debug for Value {
             Self::Boolean(b) => write!(f, "{b}"),
             Self::Integer(i) => write!(f, "{i}"),
             Self::Float(x) => write!(f, "{x:?}"),
-            Self::String(s) => f.write_str(s),
+            Self::String(s) => write!(f, "{s}"),
+            Self::Identifier(s) => f.write_str(s),
             Self::Function(func) => write!(f, "function: {func:#x?}"),
         }
     }
 }
 
 impl Value {
-    pub fn as_str(&self) -> Option<&str> {
+    pub fn as_identifier(&self) -> Option<&SmolStr> {
         match self {
-            Self::String(s) => Some(s),
+            Self::Identifier(s) => Some(s),
             _ => None,
         }
     }
